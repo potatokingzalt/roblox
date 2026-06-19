@@ -7,7 +7,6 @@ local Window = PotatoLib:CreateWindow({
 })
 
 local MainTab = Window:CreateTab("Main")
-local PlayerTab = Window:CreateTab("Player")
 local MiscTab = Window:CreateTab("Misc")
 
 local HttpService = game:GetService("HttpService")
@@ -81,7 +80,7 @@ end
 
 if Settings.AutoAdBypass then task.spawn(ExecuteAdBypass) end
 
-local function GetPlayerPlotCFrame()
+local function GetPlayerPlotAndSlots()
     local plotsFolder = workspace:FindFirstChild("Plots")
     if plotsFolder then
         for _, plot in ipairs(plotsFolder:GetChildren()) do
@@ -91,16 +90,22 @@ local function GetPlayerPlotCFrame()
             if ownerLabel then ownerLabel = ownerLabel:FindFirstChild("TextLabel") end
             
             if ownerLabel and ownerLabel.Text == LocalPlayer.Name then
+                local slotsFolder = plot:FindFirstChild("Slots")
+                local slotCount = 0
+                if slotsFolder then
+                    slotCount = #slotsFolder:GetChildren()
+                end
+                
                 local spawnPart = plot:FindFirstChild("SpawnPart")
                 if spawnPart then
-                    return spawnPart.CFrame
+                    return spawnPart.CFrame, slotCount
                 else
-                    return plot:GetPivot()
+                    return plot:GetPivot(), slotCount
                 end
             end
         end
     end
-    return nil
+    return nil, 0
 end
 
 MainTab:CreateToggle("Auto Farm (Sequence)", function(state)
@@ -113,18 +118,6 @@ end)
 
 MainTab:CreateToggle("Auto Train & Upgrade Weights", function(state)
     Settings.AutoTrain = state
-end)
-
-PlayerTab:CreateSlider("WalkSpeed", 16, 250, function(value)
-    if game.Players.LocalPlayer.Character and game.Players.LocalPlayer.Character:FindFirstChild("Humanoid") then
-        game.Players.LocalPlayer.Character.Humanoid.WalkSpeed = value
-    end
-end)
-
-PlayerTab:CreateSlider("JumpPower", 50, 300, function(value)
-    if game.Players.LocalPlayer.Character and game.Players.LocalPlayer.Character:FindFirstChild("Humanoid") then
-        game.Players.LocalPlayer.Character.Humanoid.JumpPower = value
-    end
 end)
 
 MiscTab:CreateSlider("Kick Cooldown (Delay)", 1, 25, function(value)
@@ -153,41 +146,34 @@ task.spawn(function()
                     
                     local targetPos = CFrame.new(700.11, 3.00, 231.58)
                     local dist = (hrp.Position - targetPos.Position).Magnitude
-                    local speed = 40
-                    local tweenInfo = TweenInfo.new(dist / speed, Enum.EasingStyle.Linear)
-                    local tween = TweenService:Create(hrp, tweenInfo, {CFrame = targetPos})
                     
-                    hrp.Anchored = true
-                    tween:Play()
-                    tween.Completed:Wait()
-                    hrp.Anchored = false
-                    task.wait(0.2)
+                    if dist > 10 then
+                        local speed = 40
+                        local tweenInfo = TweenInfo.new(dist / speed, Enum.EasingStyle.Linear)
+                        local tween = TweenService:Create(hrp, tweenInfo, {CFrame = targetPos})
+                        
+                        hrp.Anchored = true
+                        tween:Play()
+                        
+                        while tween.PlaybackState == Enum.PlaybackState.Playing and Settings.AutoFarm do
+                            task.wait(0.1)
+                        end
+                        if not Settings.AutoFarm then tween:Cancel() end
+                        
+                        hrp.Anchored = false
+                        task.wait(0.2)
+                    end
+                    
+                    if not Settings.AutoFarm then return end
                     
                     if Network:FindFirstChild("rev_KickEvent") then
                         Network.rev_KickEvent:FireServer(1, 1)
                     end
-                    task.wait(1)
                     
-                    if Settings.AutoCollect then
-                        local baseCFrame = GetPlayerPlotCFrame()
-                        if baseCFrame then
-                            dist = (hrp.Position - baseCFrame.Position).Magnitude
-                            local flyCFrame = baseCFrame * CFrame.new(0, 5, 0)
-                            tweenInfo = TweenInfo.new(dist / speed, Enum.EasingStyle.Linear)
-                            tween = TweenService:Create(hrp, tweenInfo, {CFrame = flyCFrame})
-                            
-                            hrp.Anchored = true
-                            tween:Play()
-                            tween.Completed:Wait()
-                            task.wait(0.2)
-                            
-                            for i = 1, 10 do 
-                                Network.rev_B_Collect:FireServer(i)
-                            end
-                            task.wait(0.1)
-                            hrp.Anchored = false
-                        end
-                    end
+                    local actualDelay = Settings.KickCooldown + (math.random(-5, 5) / 10)
+                    task.wait(actualDelay)
+                    
+                    if not Settings.AutoFarm then return end
                     
                     local startTime = tick()
                     while tick() - startTime < 300 do
@@ -235,14 +221,45 @@ task.spawn(function()
                         task.wait(0.3)
                     end
                     
-                    if Settings.AutoFarm then
-                        local queue_on_teleport = queue_on_teleport or syn and syn.queue_on_teleport or fluxus and fluxus.queue_on_teleport
-                        if queue_on_teleport then
-                            queue_on_teleport('loadstring(game:HttpGet("YOUR_SCRIPT_URL_HERE"))()')
+                    if not Settings.AutoFarm then return end
+                    
+                    if Settings.AutoCollect then
+                        local baseCFrame, slotCount = GetPlayerPlotAndSlots()
+                        if baseCFrame and slotCount > 0 then
+                            dist = (hrp.Position - baseCFrame.Position).Magnitude
+                            local flyCFrame = baseCFrame * CFrame.new(0, 5, 0)
+                            local speed = 40
+                            local tweenInfo = TweenInfo.new(dist / speed, Enum.EasingStyle.Linear)
+                            local tween = TweenService:Create(hrp, tweenInfo, {CFrame = flyCFrame})
+                            
+                            hrp.Anchored = true
+                            tween:Play()
+                            
+                            while tween.PlaybackState == Enum.PlaybackState.Playing and Settings.AutoFarm do
+                                task.wait(0.1)
+                            end
+                            if not Settings.AutoFarm then tween:Cancel() end
+                            
+                            task.wait(0.2)
+                            
+                            if Network:FindFirstChild("rev_B_Collect") then
+                                for i = 1, slotCount do 
+                                    Network.rev_B_Collect:FireServer(i)
+                                end
+                            end
+                            task.wait(0.1)
+                            hrp.Anchored = false
                         end
-                        TeleportService:TeleportToPlaceInstance(game.PlaceId, game.JobId, LocalPlayer)
-                        task.wait(10)
                     end
+                    
+                    if not Settings.AutoFarm then return end
+                    
+                    local queue_on_teleport = queue_on_teleport or syn and syn.queue_on_teleport or fluxus and fluxus.queue_on_teleport
+                    if queue_on_teleport then
+                        queue_on_teleport('loadstring(game:HttpGet("YOUR_SCRIPT_URL_HERE"))()')
+                    end
+                    TeleportService:TeleportToPlaceInstance(game.PlaceId, game.JobId, LocalPlayer)
+                    task.wait(10)
                 end
             end)
         end
