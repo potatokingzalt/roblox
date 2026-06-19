@@ -36,6 +36,10 @@ local Settings = {
     KickCooldown = 8.5
 }
 
+local isCollecting = false 
+local isTweening = false   
+local isKicking = false    
+
 local mt = getrawmetatable(game)
 local oldNewIndex = mt.__newindex
 if setreadonly then setreadonly(mt, false) end
@@ -90,8 +94,8 @@ local function GetPlayerPlotAndSlots()
             if ownerLabel then ownerLabel = ownerLabel:FindFirstChild("TextLabel") end
             
             if ownerLabel and ownerLabel.Text == LocalPlayer.Name then
-                local slotsFolder = plot:FindFirstChild("Slots")
                 local slotCount = 0
+                local slotsFolder = plot:FindFirstChild("Slots")
                 if slotsFolder then
                     slotCount = #slotsFolder:GetChildren()
                 end
@@ -108,7 +112,7 @@ local function GetPlayerPlotAndSlots()
     return nil, 0
 end
 
-MainTab:CreateToggle("Auto Farm (Sequence)", function(state)
+MainTab:CreateToggle("Auto Farm (Sequence Loop)", function(state)
     Settings.AutoFarm = state
 end)
 
@@ -134,134 +138,149 @@ MiscTab:CreateToggle("Anti-AFK", function(state)
 end)
 
 task.spawn(function()
-    while task.wait(1) do
-        if Settings.AutoFarm then
-            pcall(function()
-                local char = LocalPlayer.Character
-                local hrp = char and char:FindFirstChild("HumanoidRootPart")
-                local hum = char and char:FindFirstChild("Humanoid")
-                
-                if char and hrp and hum then
+    while task.wait(0.3) do
+        pcall(function()
+            if not Settings.AutoTrain then return end
+            if isCollecting or isTweening or isKicking then return end
+            
+            local char = LocalPlayer.Character
+            local hrp = char and char:FindFirstChild("HumanoidRootPart")
+            local hum = char and char:FindFirstChild("Humanoid")
+            if not char or not hrp or not hum then return end
+            
+            local isMoving = hum.MoveDirection.Magnitude > 0
+            if isMoving then
+                local currentTool = char:FindFirstChildWhichIsA("Tool")
+                if currentTool and table.find(WeightsList, currentTool.Name) then
                     hum:UnequipTools()
+                end
+            else
+                local targetWeight = WeightsList[Settings.WeightIndex]
+                if targetWeight and Network:FindFirstChild("rev_Shop_Buy") and Network:FindFirstChild("rev_WeightEquip") then
+                    Network.rev_Shop_Buy:FireServer("WeightShop", targetWeight)
+                    Network.rev_WeightEquip:FireServer(targetWeight)
                     
-                    local targetPos = CFrame.new(700.11, 3.00, 231.58)
-                    local dist = (hrp.Position - targetPos.Position).Magnitude
-                    
-                    if dist > 10 then
-                        local speed = 40
-                        local tweenInfo = TweenInfo.new(dist / speed, Enum.EasingStyle.Linear)
-                        local tween = TweenService:Create(hrp, tweenInfo, {CFrame = targetPos})
+                    local weightTool = char:FindFirstChild(targetWeight) or LocalPlayer.Backpack:FindFirstChild(targetWeight)
+                    if not weightTool then
+                        for _, t in ipairs(char:GetChildren()) do
+                            if t:IsA("Tool") and table.find(WeightsList, t.Name) then weightTool = t break end
+                        end
+                        if not weightTool then
+                            for _, t in ipairs(LocalPlayer.Backpack:GetChildren()) do
+                                if t:IsA("Tool") and table.find(WeightsList, t.Name) then weightTool = t break end
+                            end
+                        end
+                    end
+
+                    if weightTool then
+                        if not char:FindFirstChild(weightTool.Name) then
+                            hum:EquipTool(weightTool)
+                            task.wait(0.1)
+                        end
+                        weightTool:Activate()
+                        
+                        if weightTool.Name == targetWeight and Settings.WeightIndex < #WeightsList then
+                            Settings.WeightIndex = Settings.WeightIndex + 1
+                        end
+                    end
+                end
+            end
+        end)
+    end
+end)
+
+task.spawn(function()
+    while task.wait(0.3) do
+        pcall(function()
+            if not Settings.AutoFarm then return end
+            
+            local char = LocalPlayer.Character
+            local hrp = char and char:FindFirstChild("HumanoidRootPart")
+            local hum = char and char:FindFirstChild("Humanoid")
+            if not char or not hrp or not hum then return end
+
+            local targetPos = CFrame.new(700.11, 3.00, 231.58)
+            local dist = (hrp.Position - targetPos.Position).Magnitude
+            
+            if dist > 10 and not isCollecting and not isKicking then
+                isTweening = true
+                hum:UnequipTools() 
+                
+                local speed = 40
+                local tweenInfo = TweenInfo.new(dist / speed, Enum.EasingStyle.Linear)
+                local tween = TweenService:Create(hrp, tweenInfo, {CFrame = targetPos})
+                
+                hrp.Anchored = true
+                tween:Play()
+                
+                while tween.PlaybackState == Enum.PlaybackState.Playing and not isCollecting and not isKicking do
+                    task.wait(0.1)
+                end
+                if isCollecting or isKicking then tween:Cancel() end
+                
+                hrp.Anchored = false
+                isTweening = false
+                task.wait(0.2) 
+                
+            elseif dist <= 10 and not isCollecting and not isTweening and not isKicking then
+                if Network:FindFirstChild("rev_KickEvent") then
+                    Network.rev_KickEvent:FireServer(1, 1)
+                end
+                
+                isKicking = true
+                local actualDelay = Settings.KickCooldown + (math.random(-5, 5) / 10)
+                task.wait(actualDelay)
+                isKicking = false
+                
+                local trainStartTime = tick()
+                while tick() - trainStartTime < 300 do
+                    if not Settings.AutoFarm then break end
+                    task.wait(0.5)
+                end
+                
+                if Settings.AutoFarm and Settings.AutoCollect then
+                    local baseCFrame, slotCount = GetPlayerPlotAndSlots()
+                    if baseCFrame and slotCount > 0 then
+                        isCollecting = true
+                        hum:UnequipTools()
+                        
+                        local flyCFrame = baseCFrame * CFrame.new(0, 5, 0)
+                        local flyDist = (hrp.Position - flyCFrame.Position).Magnitude
+                        local flySpeed = 40
+                        local flyTweenInfo = TweenInfo.new(flyDist / flySpeed, Enum.EasingStyle.Linear)
+                        local flyTween = TweenService:Create(hrp, flyTweenInfo, {CFrame = flyCFrame})
                         
                         hrp.Anchored = true
-                        tween:Play()
+                        flyTween:Play()
                         
-                        while tween.PlaybackState == Enum.PlaybackState.Playing and Settings.AutoFarm do
+                        while flyTween.PlaybackState == Enum.PlaybackState.Playing do
                             task.wait(0.1)
                         end
-                        if not Settings.AutoFarm then tween:Cancel() end
+                        
+                        task.wait(0.2)
+                        
+                        if Network:FindFirstChild("rev_B_Collect") then
+                            for i = 1, slotCount do 
+                                local args = {i}
+                                Network.rev_B_Collect:FireServer(unpack(args))
+                            end
+                        end
+                        task.wait(0.1)
                         
                         hrp.Anchored = false
-                        task.wait(0.2)
+                        isCollecting = false
                     end
-                    
-                    if not Settings.AutoFarm then return end
-                    
-                    if Network:FindFirstChild("rev_KickEvent") then
-                        Network.rev_KickEvent:FireServer(1, 1)
-                    end
-                    
-                    local actualDelay = Settings.KickCooldown + (math.random(-5, 5) / 10)
-                    task.wait(actualDelay)
-                    
-                    if not Settings.AutoFarm then return end
-                    
-                    local startTime = tick()
-                    while tick() - startTime < 300 do
-                        if not Settings.AutoFarm then break end
-                        
-                        if Settings.AutoTrain then
-                            local isMoving = hum.MoveDirection.Magnitude > 0
-                            if isMoving then
-                                local currentTool = char:FindFirstChildWhichIsA("Tool")
-                                if currentTool and table.find(WeightsList, currentTool.Name) then
-                                    hum:UnequipTools()
-                                end
-                            else
-                                local targetWeight = WeightsList[Settings.WeightIndex]
-                                if targetWeight and Network:FindFirstChild("rev_Shop_Buy") and Network:FindFirstChild("rev_WeightEquip") then
-                                    Network.rev_Shop_Buy:FireServer("WeightShop", targetWeight)
-                                    Network.rev_WeightEquip:FireServer(targetWeight)
-                                    
-                                    local weightTool = char:FindFirstChild(targetWeight) or LocalPlayer.Backpack:FindFirstChild(targetWeight)
-                                    if not weightTool then
-                                        for _, t in ipairs(char:GetChildren()) do
-                                            if t:IsA("Tool") and table.find(WeightsList, t.Name) then weightTool = t break end
-                                        end
-                                        if not weightTool then
-                                            for _, t in ipairs(LocalPlayer.Backpack:GetChildren()) do
-                                                if t:IsA("Tool") and table.find(WeightsList, t.Name) then weightTool = t break end
-                                            end
-                                        end
-                                    end
-
-                                    if weightTool then
-                                        if not char:FindFirstChild(weightTool.Name) then
-                                            hum:EquipTool(weightTool)
-                                            task.wait(0.1)
-                                        end
-                                        weightTool:Activate()
-                                        
-                                        if weightTool.Name == targetWeight and Settings.WeightIndex < #WeightsList then
-                                            Settings.WeightIndex = Settings.WeightIndex + 1
-                                        end
-                                    end
-                                end
-                            end
-                        end
-                        task.wait(0.3)
-                    end
-                    
-                    if not Settings.AutoFarm then return end
-                    
-                    if Settings.AutoCollect then
-                        local baseCFrame, slotCount = GetPlayerPlotAndSlots()
-                        if baseCFrame and slotCount > 0 then
-                            dist = (hrp.Position - baseCFrame.Position).Magnitude
-                            local flyCFrame = baseCFrame * CFrame.new(0, 5, 0)
-                            local speed = 40
-                            local tweenInfo = TweenInfo.new(dist / speed, Enum.EasingStyle.Linear)
-                            local tween = TweenService:Create(hrp, tweenInfo, {CFrame = flyCFrame})
-                            
-                            hrp.Anchored = true
-                            tween:Play()
-                            
-                            while tween.PlaybackState == Enum.PlaybackState.Playing and Settings.AutoFarm do
-                                task.wait(0.1)
-                            end
-                            if not Settings.AutoFarm then tween:Cancel() end
-                            
-                            task.wait(0.2)
-                            
-                            if Network:FindFirstChild("rev_B_Collect") then
-                                for i = 1, slotCount do 
-                                    Network.rev_B_Collect:FireServer(i)
-                                end
-                            end
-                            task.wait(0.1)
-                            hrp.Anchored = false
-                        end
-                    end
-                    
-                    if not Settings.AutoFarm then return end
-                    
-                    local queue_on_teleport = queue_on_teleport or syn and syn.queue_on_teleport or fluxus and fluxus.queue_on_teleport
-                    if queue_on_teleport then
-                        queue_on_teleport('loadstring(game:HttpGet("YOUR_SCRIPT_URL_HERE"))()')
+                end
+                
+                if Settings.AutoFarm then
+                    local executeFunc = queue_on_teleport or (syn and syn.queue_on_teleport) or (fluxus and fluxus.queue_on_teleport)
+                    if executeFunc then
+                        executeFunc("loadstring(game:HttpGet('YOUR_SCRIPT_URL_HERE'))()")
                     end
                     TeleportService:TeleportToPlaceInstance(game.PlaceId, game.JobId, LocalPlayer)
                     task.wait(10)
                 end
-            end)
-        end
+            end
+        end)
     end
 end)
