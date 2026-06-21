@@ -1,4 +1,4 @@
-local PotatoLib = loadstring(game:HttpGet("https://raw.githubusercontent.com/potatokingzalt/roblox/main/library.lua"))()
+local PotatoLib = loadstring(game:HttpGet("https://raw.githubusercontent.com/potatokingzalt/roblox/main/library.lua?t=" .. tostring(tick())))()
 
 local Window = PotatoLib:CreateWindow({
     Title = "Potato Kingdom - Universal"
