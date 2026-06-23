@@ -1,4 +1,4 @@
-local AutoExecuteString = [[loadstring(game:HttpGet("https://raw.githubusercontent.com/potatokingzalt/roblox/main/games/universal.lua"))()]]
+local AutoExecuteString = [[loadstring(game:HttpGet("https://raw.githubusercontent.com/potatokingzalt/roblox/refs/heads/main/games/universal.lua"))()]]
 
 local queue_on_teleport = queue_on_teleport or (syn and syn.queue_on_teleport) or (fluxus and fluxus.queue_on_teleport) or (getgenv and getgenv().queue_on_teleport)
 
